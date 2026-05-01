@@ -10,6 +10,7 @@ lives in `scripts/`.
 | Skill | Description |
 |-------|-------------|
 | [codex-subagent-manager](codex-subagent-manager/) | Manage, validate, audit, and install bundled Codex custom subagents. Includes the `awesome-codex-subagents` TOML agent collection. |
+| [contextual-memory](contextual-memory/) | Durable local RAG memory with managed Ollama `embeddinggemma`, `sqlite-vec`, SQLite/FTS5 fallback, staged writeback, and context packing. |
 
 ## Codex Subagent Manager
 
@@ -76,6 +77,13 @@ Each skill lives in its own folder with:
 
 To install `codex-subagent-manager` for Codex skill discovery, copy the skill
 folder into `~/.codex/skills/`.
+
+To install `contextual-memory`, copy the skill folder into
+`~/.codex/skills/`, then run:
+
+```bash
+python3 ~/.codex/skills/contextual-memory/scripts/manage_memory.py doctor --fix
+```
 
 ## Contributing
 

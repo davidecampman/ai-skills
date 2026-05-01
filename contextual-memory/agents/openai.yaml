@@ -1,0 +1,4 @@
+interface:
+  display_name: "Contextual Memory"
+  short_description: "Durable local RAG memory with Ollama, sqlite-vec, and SQLite/FTS5 fallback."
+  default_prompt: "Use $contextual-memory to install, operate, or integrate durable local memory with Ollama embeddings and sqlite-vec retrieval."
