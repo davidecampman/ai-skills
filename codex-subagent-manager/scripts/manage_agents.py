@@ -2,17 +2,29 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import re
 import shutil
 import sys
 import tomllib
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 
 REQUIRED_FIELDS = ("name", "description", "developer_instructions")
+CONFIG_PROFILE_KEYS = ("max_threads", "max_depth")
+CONFIG_PROFILES: dict[str, dict[str, int]] = {
+    "conservative": {"max_threads": 3, "max_depth": 1},
+    "balanced": {"max_threads": 6, "max_depth": 1},
+    "parallel": {"max_threads": 10, "max_depth": 1},
+}
+MAX_DEPTH_WARNING = (
+    "Note: these profiles intentionally keep agents.max_depth = 1. Higher "
+    "values enable recursive fan-out, which is costly and less predictable."
+)
 KNOWN_MODELS = {
     "gpt-5.5",
     "gpt-5.4",
@@ -59,6 +71,10 @@ class Issue:
 
 
 class RepoError(Exception):
+    pass
+
+
+class ConfigError(Exception):
     pass
 
 
@@ -566,6 +582,137 @@ def readme_sandbox_findings(repo: Path) -> list[Issue]:
     return []
 
 
+def resolve_config_path(scope: str, project_dir: Path | None = None) -> Path:
+    if scope == "global":
+        return Path.home() / ".codex" / "config.toml"
+    base_dir = project_dir.resolve() if project_dir else Path.cwd()
+    return base_dir / ".codex" / "config.toml"
+
+
+def load_config_text(path: Path) -> tuple[str, dict[str, Any]]:
+    if not path.exists():
+        return "", {}
+    text = path.read_text(encoding="utf-8")
+    return text, parse_config_text(text, path)
+
+
+def parse_config_text(text: str, path: Path | None = None) -> dict[str, Any]:
+    try:
+        data = tomllib.loads(text or "")
+    except tomllib.TOMLDecodeError as exc:
+        label = str(path) if path else "config text"
+        raise ConfigError(f"{label} is not valid TOML: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ConfigError("Config did not parse to a TOML table.")
+    return data
+
+
+def agents_config(data: dict[str, Any]) -> dict[str, Any]:
+    table = data.get("agents")
+    return table if isinstance(table, dict) else {}
+
+
+def validate_agents_config_text(text: str, path: Path | None = None) -> dict[str, Any]:
+    data = parse_config_text(text, path)
+    table = data.get("agents")
+    if table is None:
+        return data
+    if not isinstance(table, dict):
+        raise ConfigError("Root [agents] must be a TOML table.")
+    for key in CONFIG_PROFILE_KEYS:
+        value = table.get(key)
+        if value is not None and type(value) is not int:
+            raise ConfigError(f"agents.{key} must be an integer.")
+    timeout = table.get("job_max_runtime_seconds")
+    if timeout is not None and type(timeout) not in {int, float}:
+        raise ConfigError("agents.job_max_runtime_seconds must be a number.")
+    return data
+
+
+def split_line_ending(line: str) -> tuple[str, str]:
+    if line.endswith("\r\n"):
+        return line[:-2], "\r\n"
+    if line.endswith("\n"):
+        return line[:-1], "\n"
+    return line, ""
+
+
+def is_toml_table_header(line: str) -> bool:
+    body, _ = split_line_ending(line)
+    return bool(re.match(r"^\s*\[[^\]]+\]\s*(?:#.*)?$", body))
+
+
+def is_root_agents_header(line: str) -> bool:
+    body, _ = split_line_ending(line)
+    return bool(re.match(r"^\s*\[agents\]\s*(?:#.*)?$", body))
+
+
+def render_agents_config_section(values: dict[str, int]) -> str:
+    lines = ["[agents]\n"]
+    lines.extend(f"{key} = {values[key]}\n" for key in CONFIG_PROFILE_KEYS)
+    return "".join(lines)
+
+
+def update_agents_config_text(text: str, values: dict[str, int]) -> str:
+    lines = text.splitlines(keepends=True)
+    if not lines:
+        return render_agents_config_section(values)
+
+    start = next((index for index, line in enumerate(lines) if is_root_agents_header(line)), None)
+    if start is None:
+        addition = render_agents_config_section(values)
+        if text.endswith("\n\n"):
+            return text + addition
+        if text.endswith("\n"):
+            return text + "\n" + addition
+        return text + "\n\n" + addition
+
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        if is_toml_table_header(lines[index]):
+            end = index
+            break
+
+    seen: set[str] = set()
+    updated_section: list[str] = []
+    key_re = re.compile(r"^(\s*)(max_threads|max_depth)(\s*=\s*)([^#]*)(\s*(?:#.*)?)$")
+
+    for line in lines[start + 1 : end]:
+        body, ending = split_line_ending(line)
+        match = key_re.match(body)
+        if match and match.group(2) in values:
+            indent, key, separator, _old_value, suffix = match.groups()
+            line_ending = ending or "\n"
+            updated_section.append(f"{indent}{key}{separator}{values[key]}{suffix}{line_ending}")
+            seen.add(key)
+        else:
+            updated_section.append(line)
+
+    for key in CONFIG_PROFILE_KEYS:
+        if key not in seen:
+            if updated_section and not updated_section[-1].endswith(("\n", "\r\n")):
+                updated_section[-1] += "\n"
+            updated_section.append(f"{key} = {values[key]}\n")
+
+    return "".join(lines[: start + 1] + updated_section + lines[end:])
+
+
+def config_diff(path: Path, before: str, after: str) -> str:
+    return "".join(
+        difflib.unified_diff(
+            before.splitlines(keepends=True),
+            after.splitlines(keepends=True),
+            fromfile=str(path),
+            tofile=f"{path} (proposed)",
+        )
+    )
+
+
+def backup_path_for(path: Path) -> Path:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return path.with_name(f"{path.name}.{timestamp}.bak")
+
+
 def cmd_inventory(args: argparse.Namespace) -> int:
     repo = args.repo.resolve()
     agents, _, issues = load_agents(repo)
@@ -646,6 +793,107 @@ def cmd_install(args: argparse.Namespace) -> int:
     return exit_code
 
 
+def cmd_config_show(args: argparse.Namespace) -> int:
+    path = resolve_config_path(args.scope, args.project_dir)
+    print(f"Scope: {args.scope}")
+    print(f"Config: {path}")
+
+    try:
+        _text, data = load_config_text(path)
+    except ConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if not path.exists():
+        print("Status: missing")
+        print("Agents: no [agents] table; Codex defaults apply.")
+        print(MAX_DEPTH_WARNING)
+        return 0
+
+    table = agents_config(data)
+    if not table:
+        print("Agents: no [agents] table; Codex defaults apply.")
+        print(MAX_DEPTH_WARNING)
+        return 0
+
+    managed_keys = [
+        key
+        for key in (*CONFIG_PROFILE_KEYS, "job_max_runtime_seconds")
+        if key in table and not isinstance(table[key], dict)
+    ]
+    if not managed_keys:
+        print("Agents: no managed root [agents] settings; Codex defaults apply.")
+        print(MAX_DEPTH_WARNING)
+        return 0
+
+    print("Agents:")
+    for key in managed_keys:
+        print(f"  agents.{key} = {table[key]}")
+    if isinstance(table.get("max_depth"), int) and table["max_depth"] > 1:
+        print(f"Warning: agents.max_depth is {table['max_depth']}. {MAX_DEPTH_WARNING}")
+    else:
+        print(MAX_DEPTH_WARNING)
+    return 0
+
+
+def cmd_config_recommend(args: argparse.Namespace) -> int:
+    values = CONFIG_PROFILES[args.profile]
+    print(f"Recommended profile: {args.profile}")
+    print("[agents]")
+    for key in CONFIG_PROFILE_KEYS:
+        print(f"{key} = {values[key]}")
+    print("agents.job_max_runtime_seconds is omitted by default; existing values are preserved.")
+    print(MAX_DEPTH_WARNING)
+    return 0
+
+
+def cmd_config_apply(args: argparse.Namespace) -> int:
+    if not args.dry_run and not args.backup:
+        print("error: config apply requires either --dry-run or --backup", file=sys.stderr)
+        return 2
+
+    path = resolve_config_path(args.scope, args.project_dir)
+    values = CONFIG_PROFILES[args.profile]
+    try:
+        before, _data = load_config_text(path)
+        after = update_agents_config_text(before, values)
+        validate_agents_config_text(after, path)
+    except ConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"Scope: {args.scope}")
+    print(f"Config: {path}")
+    print(f"Profile: {args.profile}")
+    print(MAX_DEPTH_WARNING)
+
+    if before == after:
+        print("No changes required.")
+        return 0
+
+    if args.dry_run:
+        print("Dry run: no files were written.")
+        diff = config_diff(path, before, after)
+        if diff:
+            print()
+            print(diff, end="" if diff.endswith("\n") else "\n")
+        return 0
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    backup = backup_path_for(path)
+    if path.exists():
+        shutil.copy2(path, backup)
+        print(f"Backup: {backup}")
+    else:
+        backup.write_text("", encoding="utf-8")
+        print(f"Backup: {backup} (empty; config did not exist)")
+    path.write_text(after, encoding="utf-8")
+    print("Applied [agents] settings:")
+    for key in CONFIG_PROFILE_KEYS:
+        print(f"  agents.{key} = {values[key]}")
+    return 0
+
+
 def parse_agent_names(values: list[str]) -> list[str]:
     names: list[str] = []
     for value in values:
@@ -717,6 +965,26 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--dry-run", action="store_true", help="Show what would be copied without writing files.")
     install.add_argument("--overwrite", action="store_true", help="Overwrite existing target agent files.")
     install.set_defaults(func=cmd_install)
+
+    config = sub.add_parser("config", help="Show, recommend, or apply Codex [agents] config settings.")
+    config_sub = config.add_subparsers(dest="config_command", required=True)
+
+    config_show = config_sub.add_parser("show", help="Show current Codex [agents] config settings.")
+    config_show.add_argument("--scope", choices=("global", "project"), required=True)
+    config_show.add_argument("--project-dir", type=Path, help="Project directory for --scope project. Defaults to cwd.")
+    config_show.set_defaults(func=cmd_config_show)
+
+    config_recommend = config_sub.add_parser("recommend", help="Print a recommended Codex [agents] profile.")
+    config_recommend.add_argument("--profile", choices=tuple(CONFIG_PROFILES), required=True)
+    config_recommend.set_defaults(func=cmd_config_recommend)
+
+    config_apply = config_sub.add_parser("apply", help="Dry-run or apply a Codex [agents] profile.")
+    config_apply.add_argument("--scope", choices=("global", "project"), required=True)
+    config_apply.add_argument("--project-dir", type=Path, help="Project directory for --scope project. Defaults to cwd.")
+    config_apply.add_argument("--profile", choices=tuple(CONFIG_PROFILES), required=True)
+    config_apply.add_argument("--dry-run", action="store_true", help="Show the proposed config change without writing files.")
+    config_apply.add_argument("--backup", action="store_true", help="Create a timestamped .bak file before writing changes.")
+    config_apply.set_defaults(func=cmd_config_apply)
     return parser
 
 
@@ -726,6 +994,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.func(args)
     except RepoError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except ConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

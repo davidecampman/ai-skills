@@ -22,43 +22,56 @@ the same `categories/*/*.toml` layout.
 | `validate` | Check TOML validity, required fields, unique names, and README links |
 | `audit` | Produce quality-first model, sandbox, MCP, and documentation findings |
 | `install` | Copy selected agents into global or project Codex agent directories |
+| `config` | Show, recommend, dry-run, or apply Codex `[agents]` settings |
 
 ## How to Execute
 
-Use the bundled manager script:
+From this repository:
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/scripts/manage_agents.py" <command> --repo "${CLAUDE_SKILL_DIR}/agents"
+python3 codex-subagent-manager/scripts/manage_agents.py <command> \
+  --repo codex-subagent-manager/agents
 ```
 
-If `CLAUDE_SKILL_DIR` is unavailable, run the script from this skill folder and
-use `--repo agents`.
+From an installed Codex skill:
+
+```bash
+python3 ~/.codex/skills/codex-subagent-manager/scripts/manage_agents.py <command> \
+  --repo ~/.codex/skills/codex-subagent-manager/agents
+```
+
+The `config` command manages Codex `config.toml` and does not take `--repo`.
 
 ## Common Workflows
 
 ### Inventory bundled agents
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/scripts/manage_agents.py" inventory --repo "${CLAUDE_SKILL_DIR}/agents" --format table
+python3 codex-subagent-manager/scripts/manage_agents.py inventory \
+  --repo codex-subagent-manager/agents \
+  --format table
 ```
 
 ### Validate bundled agents
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/scripts/manage_agents.py" validate --repo "${CLAUDE_SKILL_DIR}/agents"
+python3 codex-subagent-manager/scripts/manage_agents.py validate \
+  --repo codex-subagent-manager/agents
 ```
 
 ### Audit quality and settings
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/scripts/manage_agents.py" audit --repo "${CLAUDE_SKILL_DIR}/agents" --policy quality-first
+python3 codex-subagent-manager/scripts/manage_agents.py audit \
+  --repo codex-subagent-manager/agents \
+  --policy quality-first
 ```
 
 ### Dry-run a global install
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/scripts/manage_agents.py" install \
-  --repo "${CLAUDE_SKILL_DIR}/agents" \
+python3 codex-subagent-manager/scripts/manage_agents.py install \
+  --repo codex-subagent-manager/agents \
   --agents reviewer docs-researcher code-mapper \
   --scope global \
   --dry-run
@@ -67,8 +80,8 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/manage_agents.py" install \
 ### Dry-run a project install
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/scripts/manage_agents.py" install \
-  --repo "${CLAUDE_SKILL_DIR}/agents" \
+python3 codex-subagent-manager/scripts/manage_agents.py install \
+  --repo codex-subagent-manager/agents \
   --agents reviewer docs-researcher code-mapper \
   --scope project \
   --project-dir /path/to/project \
@@ -77,6 +90,26 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/manage_agents.py" install \
 
 Only run the same install command without `--dry-run` after the user confirms
 the exact agents and scope.
+
+### Review Codex agent config
+
+```bash
+python3 codex-subagent-manager/scripts/manage_agents.py config show --scope global
+```
+
+```bash
+python3 codex-subagent-manager/scripts/manage_agents.py config recommend --profile balanced
+```
+
+```bash
+python3 codex-subagent-manager/scripts/manage_agents.py config apply \
+  --scope global \
+  --profile balanced \
+  --dry-run
+```
+
+Only run `config apply` without `--dry-run` when the user explicitly wants the
+change. Real writes require `--backup`.
 
 ## Selection Guidance
 
@@ -87,6 +120,8 @@ implementer plus one or two focused reviewers over many overlapping specialists.
 - `--scope project` targets `<project-dir>/.codex/agents`.
 - Existing target files are skipped unless `--overwrite` is passed.
 - After installing, recommend restarting or refreshing Codex if agents are not discovered.
+- `config apply` touches only root `[agents]` `max_threads` and `max_depth`;
+  it preserves unrelated TOML and existing `job_max_runtime_seconds` values.
 
 ## Review Guidance
 

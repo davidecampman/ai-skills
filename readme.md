@@ -15,7 +15,8 @@ lives in `scripts/`.
 
 `codex-subagent-manager` bundles 136 Codex custom agents from
 `awesome-codex-subagents` and includes a standard-library Python manager for
-inventory, validation, auditing, and safe install dry-runs.
+inventory, validation, auditing, safe install dry-runs, and Codex `[agents]`
+config review.
 
 Useful commands:
 
@@ -47,6 +48,23 @@ python3 codex-subagent-manager/scripts/manage_agents.py install \
 ```
 
 Remove `--dry-run` only after confirming the exact agents and target scope.
+
+Review or tune Codex subagent fan-out settings:
+
+```bash
+python3 codex-subagent-manager/scripts/manage_agents.py config show --scope global
+```
+
+```bash
+python3 codex-subagent-manager/scripts/manage_agents.py config recommend --profile balanced
+```
+
+```bash
+python3 codex-subagent-manager/scripts/manage_agents.py config apply \
+  --scope global \
+  --profile balanced \
+  --dry-run
+```
 
 ## Usage
 

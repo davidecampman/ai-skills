@@ -67,6 +67,36 @@ Flag role mismatches:
 - A workspace-write agent whose role is only evidence gathering, review, or advice.
 - Instructions that say "implement" when the intended role is advisory.
 
+## Codex Config Policy
+
+Codex global config lives at `~/.codex/config.toml`. Project config lives at
+`<project>/.codex/config.toml`. Root `[agents]` settings tune how Codex fans out
+subagent work across global and project agent files.
+
+Supported manager profiles:
+
+| Profile | `agents.max_threads` | `agents.max_depth` | Use when |
+|---------|----------------------|--------------------|----------|
+| `conservative` | `3` | `1` | You want low parallelism and easy-to-follow subagent activity. |
+| `balanced` | `6` | `1` | Recommended default for ordinary Codex subagent workflows. |
+| `parallel` | `10` | `1` | You want broad fan-out for large reviews or batchy investigations. |
+
+The manager intentionally does not set `agents.job_max_runtime_seconds` by
+default. If that key already exists, preserve it while applying a profile.
+
+Do not recommend `agents.max_depth > 1` in these profiles. Recursive subagent
+fan-out can become expensive and harder to reason about, especially when agents
+spawn other agents in parallel.
+
+Config writes must be cautious:
+
+- `config show` reads the current file without modifying it.
+- `config recommend` prints the chosen profile values.
+- `config apply --dry-run` shows the proposed TOML diff and writes nothing.
+- `config apply --backup` creates a timestamped `.bak` before writing.
+- Real writes update only root `[agents]` `max_threads` and `max_depth`.
+- Validate the resulting TOML before writing.
+
 ## MCP Policy
 
 MCP entries are useful but create environment assumptions. Flag:
