@@ -6,6 +6,7 @@ A collection of reusable AI skills for Claude Code and other AI assistants.
 
 | Skill | Description |
 |-------|-------------|
+| [codex-subagent-manager](codex-subagent-manager/) | Manage, validate, audit, and install bundled Codex custom subagents. Includes the `awesome-codex-subagents` TOML agent collection. |
 | [rag-memory](rag-memory/) | Persistent RAG-based memory system for storing and retrieving knowledge across sessions. Supports Python (vector search via ChromaDB) and PowerShell (SQLite FTS5 fallback). |
 
 ## Usage
