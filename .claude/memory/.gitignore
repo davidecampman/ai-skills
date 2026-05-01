@@ -1,6 +1,0 @@
-# Memory data files — keep out of version control
-memories.db
-memories.db-journal
-memories.db-wal
-chroma/
-config.json
